@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Create News</title>
+</head>
+
+<script src="https://cdn.tiny.cloud/1/xhojxiimgx75raknlmvxw4dwkl1dwvmdtz7rsqw3bk96zezp/tinymce/6/tinymce.min.js"
+    referrerpolicy="origin"></script>
+
+<body>
+    <form action="/api/createNews" method="post" enctype="multipart/form-data">
+        <div>
+            <label for="title">Title:</label>
+            <input type="text" id="title" name="title">
+        </div>
+        <div>
+            <label for="title">Description:</label>
+            <input type="text" id="title" name="description">
+        </div>
+        <div>
+            <label for="title">Types:</label>
+            <input type="text" id="title" name="types">
+        </div>
+        <label for="file">avatar</label>
+        <!-- <input type="text" name="filename" id="thumbnail"> -->
+        <input type="file" name="file">
+        <div>
+            <label for="content">Content:</label>
+            <textarea id="content" name="content" rows="10" cols="80"></textarea>
+        </div>
+        <button id="save-button" type="submit">Create News</button>
+    </form>
+</body>
+<script>
+    const example_image_upload_handler = (blobInfo, progress) => new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.withCredentials = false;
+        xhr.open('POST', 'uploadimagesNews');
+        // xhr.open('POST', 'https://api.cloudinary.com/v1_1/dia7pht4q/image/upload');
+        xhr.upload.onprogress = (e) => {
+            progress(e.loaded / e.total * 100);
+        };
+        xhr.onload = () => {
+            if (xhr.status === 403) {
+                reject({ message: 'HTTP Error: ' + xhr.status, remove: true });
+                return;
+            }
+            if (xhr.status < 200 || xhr.status >= 300) {
+                reject('HTTP Error: ' + xhr.status);
+                return;
+            }
+            const json = JSON.parse(xhr.responseText);
+            if (!json || typeof json.location != 'string') {
+                reject('Invalid JSON: ' + xhr.responseText);
+                return;
+            }
+            // const imageDataUrl = base64Data.replace(/^data:image\/(png|jpg|jpeg);base64,/, '');
+            const imageUrl = json.location.replace(/\\/g, '/');
+            resolve(imageUrl);
+            // resolve('/' + json.imagePath);
+        };
+        xhr.onerror = () => {
+            reject('Image upload failed due to a XHR Transport error. Code: ' + xhr.status);
+        };
+        const formData = new FormData();
+        formData.append('file', blobInfo.blob(), blobInfo.filename());
+        // formData.append('upload_preset', 'ni7u9fnt');
+        xhr.send(formData);
+    });
+
+
+    tinymce.init({
+        selector: 'textarea',  // change this value according to your HTML
+        plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount',
+        // plugins: 'preview importcss searchreplace autolink autosave save directionality code visualblocks visualchars fullscreen image link media template codesample table charmap pagebreak nonbreaking anchor insertdatetime advlist lists wordcount help charmap quickbars emoticons',
+        // toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table mergetags | addcomment showcomments | spellcheckdialog a11ycheck typography | align lineheight | checklist numlist bullist indent outdent | emoticons charmap | removeformat',
+        toolbar: 'undo redo | bold italic underline strikethrough | fontfamily fontsize blocks | alignleft aligncenter alignright alignjustify | outdent indent |  numlist bullist | forecolor backcolor removeformat | pagebreak | charmap emoticons | fullscreen  preview save print | insertfile image media template link anchor codesample | ltr rtl',
+        // images_file_types: 'jpg,svg,webp',
+        images_upload_url: '/api/uploadimagesNews',
+        images_upload_base_path: '/images/',
+        automatic_uploads: true,
+        images_upload_handler: example_image_upload_handler,
+
+        images_upload_credentials: true, // Cho phép truy cập credentials khi tải lên ảnh từ local
+        // image_advtab: true, // Hiển thị tab nâng cao cho hình ảnh
+        // image_dimensions: false, // Vô hiệu hóa tính năng lấy kích thước hình ảnh
+
+        setup: (editor) => {
+            // Thêm sự kiện khi hình ảnh được chèn vào trình soạn thảo
+            editor.on('imageUploadSuccess', (e) => {
+                const imageElement = e.target;
+                const blobInfo = e.blobInfo;
+                // Lấy đường dẫn hình ảnh đã tải lên
+                const imageUrl = blobInfo.blobUri();
+                // Thay thế đường dẫn hình ảnh trong trình soạn thảo bằng đường dẫn tải lên
+                imageElement.src = imageUrl;
+                // editor.execCommand('mceInsertContent', false, '<img src="' + imageUrl + '">'); editor.execCommand('mceInsertContent', false, '<img src="' + imageUrl + '">');
+            });
+        }
+
+    });
+</script>
+
+<!-- <script>
+    tinymce.init({
+        selector: '#thumbnail',  // change this value according to your HTML
+        plugins: 'image',
+        // plugins: 'preview importcss searchreplace autolink autosave save directionality code visualblocks visualchars fullscreen image link media template codesample table charmap pagebreak nonbreaking anchor insertdatetime advlist lists wordcount help charmap quickbars emoticons',
+        // toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table mergetags | addcomment showcomments | spellcheckdialog a11ycheck typography | align lineheight | checklist numlist bullist indent outdent | emoticons charmap | removeformat',
+        toolbar: 'image',
+        // images_file_types: 'jpg,svg,webp',
+        images_upload_url: '/api/uploadimagesNews',
+        images_upload_base_path: '/images/',
+        automatic_uploads: true,
+        images_upload_handler: example_image_upload_handler,
+
+        images_upload_credentials: true, // Cho phép truy cập credentials khi tải lên ảnh từ local
+        // image_advtab: true, // Hiển thị tab nâng cao cho hình ảnh
+        // image_dimensions: false, // Vô hiệu hóa tính năng lấy kích thước hình ảnh
+
+        setup: (editor) => {
+            // Thêm sự kiện khi hình ảnh được chèn vào trình soạn thảo
+            editor.on('imageUploadSuccess', (e) => {
+                const imageElement = e.target;
+                const blobInfo = e.blobInfo;
+                // Lấy đường dẫn hình ảnh đã tải lên
+                const imageUrl = blobInfo.blobUri();
+                // Thay thế đường dẫn hình ảnh trong trình soạn thảo bằng đường dẫn tải lên
+                imageElement.src = imageUrl;
+                // editor.execCommand('mceInsertContent', false, '<img src="' + imageUrl + '">'); editor.execCommand('mceInsertContent', false, '<img src="' + imageUrl + '">');
+            });
+        }
+
+    });
+</script> -->
+
+</html>

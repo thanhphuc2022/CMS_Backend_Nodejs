@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<body>
+    <!-- views/pagination.ejs -->
+
+    <ul>
+        <% for (let i=1; i <=totalPages; i++) { %>
+            <% if (i===currentPage) { %>
+                <li><strong>
+                        <%= i %>
+                    </strong></li>
+                <% } else { %>
+                    <li><a href="/api/AllNews?page=<%= i %>&limit=<%= limit %>">
+                            <%= i %>
+                        </a></li>
+                    <% } %>
+                        <% } %>
+    </ul>
+
+</body>
+
+</html>
