@@ -1,5 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 process.env.JWT_SECRET_ACCESS = 'test-access-secret-for-security-tests';
 process.env.JWT_SECRET_REFRESH = 'test-refresh-secret-for-security-tests';
@@ -105,6 +107,27 @@ test('image upload rejects content without a supported raster signature', () => 
   assert.equal(continued, false);
 });
 
+test('local upload returns a valid image from memory without writing a file', async () => {
+  const express = require('express');
+  const { upload } = require('../src/uploadfile');
+  const localApp = express();
+  localApp.post('/api/upload', upload.post_Uploadfile);
+  const localServer = localApp.listen(0);
+  try {
+    await new Promise((resolve) => localServer.listening ? resolve() : localServer.once('listening', resolve));
+    const address = localServer.address();
+    const image = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+    const form = new FormData();
+    form.append('file', new Blob([image], { type: 'image/png' }), 'upload.png');
+    const result = await fetch(`http://127.0.0.1:${address.port}/api/upload`, { method: 'POST', body: form });
+    assert.equal(result.status, 200);
+    assert.equal(result.headers.get('content-type'), 'image/png');
+    assert.deepEqual(Buffer.from(await result.arrayBuffer()), image);
+  } finally {
+    await new Promise((resolve, reject) => localServer.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test('rich HTML sanitizer preserves TinyMCE formatting and removes executable markup', () => {
   const clean = sanitizeRichHtml('<p><strong>hello</strong><script>alert(1)</script><img src="https://example.com/a.png" onerror="alert(1)"></p>');
   assert.match(clean, /<p><strong>hello<\/strong>/);
@@ -127,6 +150,37 @@ test('regular users may post and use content uploads with authentication and no 
   const adminRoute = stack(authRouter).find((layer) => layer.route && layer.route.path === '/updateauth/:username').route;
   assert.equal(adminRoute.stack.some((layer) => layer.handle.name === 'authenticateToken'), true);
   assert.equal(adminRoute.stack.some((layer) => layer.handle.name === 'authorize'), true);
+});
+
+test('application import does not create source upload directories and GET / responds', async () => {
+  const mongoose = require('mongoose');
+  const originalConnect = mongoose.connect;
+  const originalMkdirSync = fs.mkdirSync;
+  const originalPort = CONFIG.Server.port;
+  const serverPath = require.resolve('../src/server');
+  const accountRouterPath = require.resolve('../src/Router/Account_Router');
+  const uploadPath = require.resolve('../src/uploadfile');
+  let httpServer;
+  mongoose.connect = async () => mongoose;
+  fs.mkdirSync = () => { throw new Error('filesystem writes are not allowed during import'); };
+  CONFIG.Server.port = 0;
+  delete require.cache[serverPath];
+  delete require.cache[accountRouterPath];
+  delete require.cache[uploadPath];
+  try {
+    ({ httpServer } = require('../src/server'));
+    if (!httpServer.listening) await new Promise((resolve) => httpServer.once('listening', resolve));
+    const address = httpServer.address();
+    const result = await fetch(`http://127.0.0.1:${address.port}/`);
+    assert.equal(result.status, 200);
+    assert.equal(await result.json(), 'Backend CMS');
+  } finally {
+    if (httpServer?.listening) await new Promise((resolve, reject) => httpServer.close((error) => error ? reject(error) : resolve()));
+    mongoose.connect = originalConnect;
+    fs.mkdirSync = originalMkdirSync;
+    CONFIG.Server.port = originalPort;
+    delete require.cache[serverPath];
+  }
 });
 
 test('OTP is bound to purpose, expires and can only be consumed once', async () => {

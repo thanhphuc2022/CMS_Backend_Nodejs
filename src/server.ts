@@ -125,6 +125,6 @@ app.use((error: any, req: Request, res: Response, next: express.NextFunction) =>
 });
 // app.use(express.static('public'));
 
-app.listen(CONFIG.Server.port, () => {
+export const httpServer = app.listen(CONFIG.Server.port, () => {
     console.log(`Example app listening at http://localhost:${CONFIG.Server.port} (${formatted})`)
 })
