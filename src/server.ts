@@ -81,7 +81,7 @@ app.use(function (req, res, next) {
 
 
 app.get('/', function (req: Request, res: Response) {
-    res.json("Backend Tinhocnhuy.com")
+    res.json("Backend CMS")
 })
 
 //token
