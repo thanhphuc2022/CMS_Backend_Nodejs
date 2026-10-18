@@ -47,7 +47,7 @@
     "nodemailer": "^6.9.1",
     "resend": "^1.0.1-canary.2",
     "rimraf": "^5.0.0",
-    "sanitize-html": "^2.18.1",
+    "sanitize-html": "2.17.5",
     "slugify": "^1.6.6",
     "summernote": "^0.8.20",
     "tinymce": "^6.6.0",

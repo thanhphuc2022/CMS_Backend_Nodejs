@@ -133,6 +133,9 @@ test('rich HTML sanitizer preserves TinyMCE formatting and removes executable ma
   assert.match(clean, /<p><strong>hello<\/strong>/);
   assert.doesNotMatch(clean, /<script|onerror/i);
   assert.match(clean, /<img src="https:\/\/example.com\/a.png"/);
+
+  const encodedProtocol = sanitizeRichHtml('<a href="java&#0000001script:alert(1)">link</a>');
+  assert.doesNotMatch(encodedProtocol, /href=/i);
 });
 
 test('regular users may post and use content uploads with authentication and no Admin gate', () => {
