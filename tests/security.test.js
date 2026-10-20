@@ -155,7 +155,7 @@ test('regular users may post and use content uploads with authentication and no 
   assert.equal(adminRoute.stack.some((layer) => layer.handle.name === 'authorize'), true);
 });
 
-test('application import does not create source upload directories and GET / responds', async () => {
+test('application default handler import does not create source upload directories and GET / responds', async () => {
   const mongoose = require('mongoose');
   const originalConnect = mongoose.connect;
   const originalMkdirSync = fs.mkdirSync;
@@ -171,7 +171,9 @@ test('application import does not create source upload directories and GET / res
   delete require.cache[accountRouterPath];
   delete require.cache[uploadPath];
   try {
-    ({ httpServer } = require('../src/server'));
+    const app = require('../src/server').default;
+    assert.equal(typeof app, 'function');
+    httpServer = app.listen(0);
     if (!httpServer.listening) await new Promise((resolve) => httpServer.once('listening', resolve));
     const address = httpServer.address();
     const result = await fetch(`http://127.0.0.1:${address.port}/`);
