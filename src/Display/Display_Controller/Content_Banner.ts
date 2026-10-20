@@ -30,7 +30,7 @@ async function createContentBanner(req: Request, res: Response) {
                 id_titleBanner = id_slug + '-' + randomStringPost
             }
             images = await uploadImageToCloudinary(linkimages)
-            Content_Banner_Model.create({
+            await Content_Banner_Model.create({
                 id: id_titleBanner,
                 title: title,
                 content: safeContent,
@@ -39,8 +39,8 @@ async function createContentBanner(req: Request, res: Response) {
             })
             return res.json({ message: "Thêm thành công" })
         }
-    } catch (error) {
-        return res.json(error)
+    } catch {
+        return res.status(500).json({ message: 'Internal server error' });
     }
 }
 
@@ -76,6 +76,7 @@ async function updateContentBanner(req: Request, res: Response) {
             await Content_Banner_Model.findOneAndUpdate({ id: id }, {
                 title: title,
                 content: safeContent,
+                linkservices: linkservices,
                 images: images
             })
             return res.json({ message: "Cập nhật thành công" })

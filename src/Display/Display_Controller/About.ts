@@ -33,7 +33,7 @@ async function createAbout(req: Request, res: Response) {
             }
 
             images = await uploadImageToCloudinary(linkimages)
-            About_Model.create({
+            await About_Model.create({
                 id: idAbout,
                 title: title,
                 content: safeContent,
@@ -41,8 +41,8 @@ async function createAbout(req: Request, res: Response) {
             })
             return res.json({ message: "Thêm thành công" })
         }
-    } catch (error) {
-        return res.json(error)
+    } catch {
+        return res.status(500).json({ message: 'Internal server error' });
     }
 }
 

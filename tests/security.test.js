@@ -27,7 +27,14 @@ const { cleanupResourceImages } = require('../src/Services/cloudinaryAssets');
 const { CloudinaryAssetModel } = require('../src/Model/CloudinaryAsset_Model');
 const { RateLimitModel } = require('../src/Model/RateLimit_Model');
 const PostModel = require('../src/Model/Post_Model').PostModel;
+const CategoriesModel = require('../src/Model/Categories_Model').default;
 const NewsModel = require('../src/Model/News_Models').NewsModel;
+const { Content_Banner } = require('../src/Display/Display_Controller/Content_Banner');
+const { Content_Banner_Model } = require('../src/Display/Display_Model/Content_Banner_Model');
+const { About } = require('../src/Display/Display_Controller/About');
+const { About_Model } = require('../src/Display/Display_Model/About_Model');
+const contentServices = require('../src/Services/sp');
+const cloudinaryAssetServices = require('../src/Services/cloudinaryAssets');
 const cloudinary = require('cloudinary').v2;
 const nodemailer = require('nodemailer');
 const accountRouter = require('../src/Router/Account_Router').default;
@@ -179,6 +186,18 @@ test('application default handler import does not create source upload directori
     const result = await fetch(`http://127.0.0.1:${address.port}/`);
     assert.equal(result.status, 200);
     assert.equal(await result.json(), 'Backend CMS');
+    for (const [route, formAction] of [
+      ['/api/createNews', '/api/createNews'],
+      ['/api/createPost', '/api/createPost'],
+      ['/api/upload', '/upload']
+    ]) {
+      const rendered = await fetch(`http://127.0.0.1:${address.port}${route}`);
+      assert.equal(rendered.status, 200, route);
+      assert.match(rendered.headers.get('content-type'), /text\/html/);
+      const html = await rendered.text();
+      assert.match(html, /<form/i);
+      assert.ok(html.includes(formAction), route);
+    }
   } finally {
     if (httpServer?.listening) await new Promise((resolve, reject) => httpServer.close((error) => error ? reject(error) : resolve()));
     mongoose.connect = originalConnect;
@@ -363,5 +382,180 @@ test('POST /api/register sends OTP through mocked Gmail SMTP and reports deliver
     if (originals.emailApi === undefined) delete process.env.EMAIL_API;
     else process.env.EMAIL_API = originals.emailApi;
     console.error = originals.consoleError;
+  }
+});
+
+test('read API database failures return one controlled error response', async () => {
+  const mongoose = require('mongoose');
+  const ContactModel = require('../src/Display/Display_Model/Contact_Model').default;
+  const originals = { connect: mongoose.connect, postFind: PostModel.find, newsFind: NewsModel.find, contactFind: ContactModel.find, aboutFind: About_Model.find };
+  const serverPath = require.resolve('../src/server');
+  let server;
+  mongoose.connect = async () => mongoose;
+  const fail = () => { throw new Error('private database host and credential details'); };
+  PostModel.find = fail;
+  NewsModel.find = fail;
+  ContactModel.find = fail;
+  About_Model.find = fail;
+  delete require.cache[serverPath];
+  try {
+    const app = require('../src/server').default;
+    server = app.listen(0);
+    await new Promise((resolve) => server.listening ? resolve() : server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    for (const route of ['/api/loadPost', '/api/loadPostCategories/category', '/api/typesNews/type', '/api/tag/tag', '/api/top5viewstoday', '/api/top5views', '/api/getcontact']) {
+      const result = await fetch(base + route, { signal: AbortSignal.timeout(2000) });
+      assert.equal(result.status, 500, route);
+      assert.deepEqual(await result.json(), { message: 'Internal server error' });
+    }
+    const forwarded = await fetch(base + '/api/allabout', { signal: AbortSignal.timeout(2000) });
+    assert.equal(forwarded.status, 500);
+    const errorBody = await forwarded.json();
+    assert.equal(typeof errorBody.message, 'string');
+    assert.doesNotMatch(JSON.stringify(errorBody), /private|credential|stack/i);
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    mongoose.connect = originals.connect;
+    PostModel.find = originals.postFind;
+    NewsModel.find = originals.newsFind;
+    ContactModel.find = originals.contactFind;
+    About_Model.find = originals.aboutFind;
+    delete require.cache[serverPath];
+  }
+});
+
+test('isolated Mongoose buffers disconnected reads and rejects after its buffer timeout', async () => {
+  const mongoose = require('mongoose');
+  const isolated = new mongoose.Mongoose();
+  const model = isolated.model('ConnectionLifecycleProbe', new isolated.Schema({ value: String }, { bufferTimeoutMS: 25 }));
+  assert.equal(isolated.connection.readyState, 0);
+  const reads = await Promise.allSettled([model.findOne({}), model.findOne({})]);
+  for (const read of reads) {
+    assert.equal(read.status, 'rejected');
+    assert.match(read.reason.message, /buffering timed out/);
+  }
+  await isolated.disconnect();
+});
+
+test('post updates categoryId with and without replacing the image', async () => {
+  const originals = {
+    categoryFind: CategoriesModel.findOne,
+    postUpdate: PostModel.findOneAndUpdate,
+    upload: contentServices.uploadImageToCloudinary,
+    attach: cloudinaryAssetServices.attachUploadedImages,
+    cleanup: cloudinaryAssetServices.cleanupResourceImages
+  };
+  const updates = [];
+  CategoriesModel.findOne = async () => ({ id: 'new-category' });
+  PostModel.findOneAndUpdate = async (_query, update) => { updates.push(update); };
+  contentServices.uploadImageToCloudinary = async () => 'https://example.com/new-image.png';
+  cloudinaryAssetServices.attachUploadedImages = async () => {};
+  cloudinaryAssetServices.cleanupResourceImages = async () => {};
+  const request = {
+    params: { id: 'post-1' },
+    userId: 'user-1',
+    body: { title: 'Title', slug: 'title', description: 'Description', content: '<p>Content</p>', category: 'Category' }
+  };
+  try {
+    const withoutImage = response();
+    await Post.updatePost(request, withoutImage);
+    assert.equal(withoutImage.code, 200);
+    assert.equal(updates[0].categoryId, 'new-category');
+    assert.equal(Object.hasOwn(updates[0], 'category'), false);
+
+    const withImage = response();
+    await Post.updatePost({ ...request, file: { buffer: Buffer.from('image') } }, withImage);
+    assert.equal(withImage.code, 200);
+    assert.equal(updates[1].categoryId, 'new-category');
+    assert.equal(updates[1].avatar, 'https://example.com/new-image.png');
+  } finally {
+    CategoriesModel.findOne = originals.categoryFind;
+    PostModel.findOneAndUpdate = originals.postUpdate;
+    contentServices.uploadImageToCloudinary = originals.upload;
+    cloudinaryAssetServices.attachUploadedImages = originals.attach;
+    cloudinaryAssetServices.cleanupResourceImages = originals.cleanup;
+  }
+});
+
+test('content banner updates linkservices with and without replacing the image', async () => {
+  const originals = {
+    update: Content_Banner_Model.findOneAndUpdate,
+    find: Content_Banner_Model.findOne,
+    upload: contentServices.uploadImageToCloudinary
+  };
+  const updates = [];
+  Content_Banner_Model.findOneAndUpdate = async (_query, update) => { updates.push(update); };
+  Content_Banner_Model.findOne = async () => ({ images: undefined });
+  contentServices.uploadImageToCloudinary = async () => 'https://example.com/banner.png';
+  const request = {
+    params: { id: 'banner-1' },
+    body: { title: 'Banner', content: '<p>Content</p>', linkservices: '/services' }
+  };
+  try {
+    const withoutImage = response();
+    await Content_Banner.updateContentBanner(request, withoutImage);
+    assert.equal(withoutImage.code, 200);
+    assert.equal(updates[0].linkservices, '/services');
+
+    const withImage = response();
+    await Content_Banner.updateContentBanner({ ...request, file: { buffer: Buffer.from('image') } }, withImage);
+    assert.equal(withImage.code, 200);
+    assert.equal(updates[1].linkservices, '/services');
+    assert.equal(updates[1].images, 'https://example.com/banner.png');
+  } finally {
+    Content_Banner_Model.findOneAndUpdate = originals.update;
+    Content_Banner_Model.findOne = originals.find;
+    contentServices.uploadImageToCloudinary = originals.upload;
+  }
+});
+
+test('about and content banner creation wait for the database and return controlled write errors', async () => {
+  const originals = {
+    bannerFind: Content_Banner_Model.findOne,
+    bannerCreate: Content_Banner_Model.create,
+    aboutFind: About_Model.findOne,
+    aboutCreate: About_Model.create,
+    upload: contentServices.uploadImageToCloudinary
+  };
+  Content_Banner_Model.findOne = async () => null;
+  About_Model.findOne = async () => null;
+  contentServices.uploadImageToCloudinary = async () => 'https://example.com/image.png';
+  const imageRequest = { file: { buffer: Buffer.from('image') } };
+
+  async function assertCreateWaits(controller, model, request) {
+    let resolveCreate;
+    model.create = () => new Promise((resolve) => { resolveCreate = resolve; });
+    const res = response();
+    const operation = controller(request, res);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(typeof resolveCreate, 'function');
+    assert.equal(res.body, undefined);
+    resolveCreate({});
+    await operation;
+    assert.equal(res.code, 200);
+    assert.equal(res.body.message, 'Thêm thành công');
+  }
+
+  async function assertCreateFailure(controller, model, request) {
+    model.create = async () => { throw new Error('database write failed'); };
+    const res = response();
+    await controller(request, res);
+    assert.equal(res.code, 500);
+    assert.deepEqual(res.body, { message: 'Internal server error' });
+  }
+
+  try {
+    const bannerRequest = { ...imageRequest, body: { title: 'Banner', content: '<p>Content</p>', linkservices: '/services' } };
+    const aboutRequest = { ...imageRequest, body: { title: 'About', content: '<p>Content</p>' } };
+    await assertCreateWaits(Content_Banner.createContentBanner, Content_Banner_Model, bannerRequest);
+    await assertCreateWaits(About.createAbout, About_Model, aboutRequest);
+    await assertCreateFailure(Content_Banner.createContentBanner, Content_Banner_Model, bannerRequest);
+    await assertCreateFailure(About.createAbout, About_Model, aboutRequest);
+  } finally {
+    Content_Banner_Model.findOne = originals.bannerFind;
+    Content_Banner_Model.create = originals.bannerCreate;
+    About_Model.findOne = originals.aboutFind;
+    About_Model.create = originals.aboutCreate;
+    contentServices.uploadImageToCloudinary = originals.upload;
   }
 });

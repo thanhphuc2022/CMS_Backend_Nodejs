@@ -116,7 +116,7 @@ app.use('/api', Content_Banner_Router);
 app.use('/api', Contact_Router);
 
 app.set('view engine', 'ejs');
-app.set('views', path.join(__dirname, 'src', 'views'));
+app.set('views', path.join(__dirname, '../views'));
 app.use(express.static(path.join(__dirname, '../public')));
 app.use((error: any, req: Request, res: Response, next: express.NextFunction) => {
     if (res.headersSent) return next(error);

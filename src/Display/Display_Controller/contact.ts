@@ -6,7 +6,7 @@ async function getContact(req: Request, res: Response) {
         const contact = await ContactModel.find({})
         return res.json({contact})
     } catch (error) {
-        return res.json(error)
+        return res.status(500).json({ message: 'Internal server error' });
     }
 }
 

@@ -304,7 +304,7 @@ async function loadNews_Types(req: Request, res: Response) {
         };
         return res.json(paginationResult);
     } catch (error) {
-        console.log(error)
+        return res.status(500).json({ message: 'Internal server error' });
     }
 }
 
@@ -338,7 +338,7 @@ async function LoadNews_Tag(req: Request, res: Response) {
         };
         return res.json(paginationResult)
     } catch (error) {
-        console.log(error)
+        return res.status(500).json({ message: 'Internal server error' });
     }
 }
 
@@ -355,7 +355,7 @@ async function LoadNews_Top5_ViewstoDay(req: Request, res: Response) {
             .limit(5);
         return res.json(topPosts)
     } catch (error) {
-        console.error(error);
+        return res.status(500).json({ message: 'Internal server error' });
     }
 }
 
@@ -367,7 +367,7 @@ async function Top5Views(req: Request, res: Response) {
             .limit(5);
         return res.json(topPosts);
     } catch (error) {
-        console.error(error);
+        return res.status(500).json({ message: 'Internal server error' });
     }
 }
 

@@ -130,7 +130,7 @@ async function updatePost(req: Request, res: Response) {
                 slug: slug,
                 description: description,
                 content: safeContent,
-                category: Cate.id,
+                categoryId: Cate.id,
             })
             await attachUploadedImages(req.userId!, 'post', id, safeContent);
             return res.json({ message: "Cập nhật thành công", id })
@@ -220,7 +220,7 @@ async function loadPost_Username(req: Request, res: Response) {
         })
         return res.json(post);
     } catch (error) {
-        console.log(error)
+        return res.status(500).json({ message: 'Internal server error' });
     }
 }
 
@@ -232,7 +232,7 @@ async function loadPost_Categories(req: Request, res: Response) {
         //        const category = await CategoriesModel.findOne({ id: categorieId })
         return res.json(post);
     } catch (error) {
-        console.log(error)
+        return res.status(500).json({ message: 'Internal server error' });
     }
 }
 
