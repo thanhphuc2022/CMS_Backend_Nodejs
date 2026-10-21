@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import AccountModel from "../Model/Account_Model";
 import bcrypt from "bcrypt";
 import { issueOtpChallenge, consumeOtpChallenge } from "../Security/otp";
+import { registerAccount } from '../Security/registerAccount';
 import { OtpEmailDeliveryError } from "../Services/mailer";
 import { randomUUID, randomBytes } from 'crypto';
 import { generateAccessToken, generateRefreshToken } from "../middleware/jwt"
@@ -34,13 +35,10 @@ async function get_Register(req: Request, res: Response) {
 
 async function post_Register(req: Request, res: Response) {
     try {
-        const result = await consumeOtpChallenge(req.body.challengeId, 'registration', req.body.otp);
-        if (result.status !== 'ok') return res.status(400).json({ message: 'Mã xác nhận không hợp lệ hoặc đã hết hạn' });
-        const { username, fullname, email, passwordHash } = result.challenge;
-        if (!username || !fullname || !passwordHash) return res.status(400).json({ message: 'Thử thách không hợp lệ' });
-        const existing = await AccountModel.findOne({ $or: [{ username }, { email }] }).select('_id').lean();
-        if (existing) return res.status(409).json({ message: 'Tên đăng nhập hoặc email đã được sử dụng' });
-        await AccountModel.create({ username, fullname, email, password: passwordHash });
+        const result = await registerAccount(req.body.challengeId, req.body.otp);
+        if (result === 'invalid') return res.status(400).json({ message: 'Mã xác nhận không hợp lệ hoặc đã hết hạn' });
+        if (result === 'malformed') return res.status(400).json({ message: 'Thử thách không hợp lệ' });
+        if (result === 'conflict') return res.status(409).json({ message: 'Tên đăng nhập hoặc email đã được sử dụng' });
         return res.json({ message: 'Đăng ký thành công' });
     } catch {
         return res.status(500).json({ message: 'Lỗi máy chủ' });

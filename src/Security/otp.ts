@@ -3,6 +3,7 @@ import { CONFIG } from '../config/config';
 import { SecurityChallengeModel, ChallengePurpose } from '../Model/SecurityChallenge_Model';
 import { sendOtpEmail } from '../Services/mailer';
 import { takeRateLimit } from './rateLimit';
+import { ClientSession } from 'mongoose';
 
 const OTP_TTL_MS = 60_000;
 const MAX_ATTEMPTS = 5;
@@ -45,7 +46,7 @@ export async function issueOtpChallenge(input: NewChallenge): Promise<string> {
     }
 }
 
-export async function consumeOtpChallenge(challengeId: unknown, purpose: ChallengePurpose, otp: unknown) {
+export async function consumeOtpChallenge(challengeId: unknown, purpose: ChallengePurpose, otp: unknown, session?: ClientSession) {
     if (typeof challengeId !== 'string' || challengeId.length > 64 || typeof otp !== 'string' || !/^\d{6}$/.test(otp)) {
         return { status: 'invalid' as const };
     }
@@ -56,21 +57,28 @@ export async function consumeOtpChallenge(challengeId: unknown, purpose: Challen
         attempts: { $lt: MAX_ATTEMPTS },
         consumedAt: { $exists: false }
     };
-    const challenge = await SecurityChallengeModel.findOne(query).exec();
+    const lookup = SecurityChallengeModel.findOne(query);
+    if (session) lookup.session(session);
+    const challenge = await lookup.exec();
     if (!challenge) return { status: 'invalid' as const };
 
     const expected = Buffer.from(challenge.otpDigest, 'hex');
     const provided = Buffer.from(digestOtp(challengeId, purpose, otp), 'hex');
     const matches = expected.length === provided.length && timingSafeEqual(expected, provided);
     if (!matches) {
-        await SecurityChallengeModel.updateOne(query, { $inc: { attempts: 1 } }).exec();
+        const increment = SecurityChallengeModel.updateOne(query, { $inc: { attempts: 1 } });
+        if (session) increment.session(session);
+        await increment.exec();
         return { status: 'invalid' as const };
     }
 
     const consumed = await SecurityChallengeModel.findOneAndUpdate(
         { ...query, otpDigest: challenge.otpDigest },
-        { $set: { consumedAt: new Date() } },
-        { new: true }
+        { $set: {
+            consumedAt: new Date(),
+            ...(session && purpose === 'registration' ? { accountId: String(challenge._id) } : {})
+        } },
+        session ? { new: true, session } : { new: true }
     ).exec();
     return consumed ? { status: 'ok' as const, challenge: consumed } : { status: 'invalid' as const };
 }

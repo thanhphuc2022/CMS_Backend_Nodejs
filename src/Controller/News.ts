@@ -4,7 +4,8 @@ import { NewsModel } from "../Model/News_Models";
 import Types_News_Model from "../Model/Types_News_Models"
 import { uploadImageToCloudinary, convertToSlug} from "../Services/sp"
 import { sanitizeRichHtml } from '../Security/html';
-import { uploadImageBuffer, attachUploadedImages, cleanupResourceImages, extractCloudinaryImageUrls } from '../Services/cloudinaryAssets';
+import { uploadImageBuffer, prepareUpdatedImageReferences } from '../Services/cloudinaryAssets';
+import { createContentWithImages, ContentCreationUncertain } from '../Services/createContentWithImages';
 
 //UPLOAD HÌNH ẢNH LÊN CLOUDINARY KHI CHỌN HÌNH ẢNH TẠO BÀI VIẾT
 
@@ -31,7 +32,6 @@ interface TempMulterFile extends Express.Multer.File {
 }
 
 async function post_CreateNews(req: Request, res: Response) {
-    let thumbnailUrl: string | null = null;
     try {
         const title = req.body.title;
         const description = req.body.description;
@@ -69,21 +69,18 @@ async function post_CreateNews(req: Request, res: Response) {
         } else {
             id = slug + '-' + randomStringPost
         }
-        thumbnailUrl = await uploadImageToCloudinary(linkfile, req.userId);
-        const newPost = await NewsModel.create({
+        await createContentWithImages(NewsModel, 'news', req.userId!, {
             id: id,//Id Post
             title: title,
             slug: id,
             description: description,
-            avatar: thumbnailUrl,
             content: safeContent,
             username: req.userId,
             // username: "admindemo",
             // account: accountId,
             typesid: types.id,
             tag: tag
-        });
-        await attachUploadedImages(req.userId!, 'news', id, safeContent, thumbnailUrl);
+        }, linkfile);
         // return res.json(newPost);
 
         // fs.unlink(linkfile.path, (err) => {
@@ -96,6 +93,9 @@ async function post_CreateNews(req: Request, res: Response) {
 
         return res.json({ message: "Thêm thành công", id })
     } catch (error) {
+        if (error instanceof ContentCreationUncertain) {
+            return res.status(503).json({ message: 'Creation outcome unknown; check the article before retrying', id: error.resourceId, creationStatus: 'unknown' });
+        }
         return res.status(500).json({ message: 'Internal server error' });
     }
 }
@@ -103,6 +103,7 @@ async function post_CreateNews(req: Request, res: Response) {
 //CẬP NHẬT TIN TỨC
 async function updateNews(req: Request, res: Response) {
     let thumbnailUrl: string | null = null;
+    let writeStarted = false;
     try {
         const id = req.params.id;
         const { title, slug, description, content, tag } = req.body;
@@ -115,6 +116,8 @@ async function updateNews(req: Request, res: Response) {
             return res.status(400).json({ message: 'Invalid news data' });
         }
         const safeContent = sanitizeRichHtml(content);
+        const existing = await NewsModel.findOne({ id });
+        if (!existing) return res.status(404).json({ message: 'Resource not found' });
         // if (title == '' || description == '' || content == '' || linkfile == '' || nametypes == '') {
         //     deleteImageFromCloudinary(publicId)
         //     return res.json({ message: "Vui lòng điền đầy đủ thông tin" })
@@ -137,19 +140,23 @@ async function updateNews(req: Request, res: Response) {
         // }
 
         if (!linkfile) {
-            await NewsModel.findOneAndUpdate({ id: id }, {
+            await prepareUpdatedImageReferences(req.userId!, 'news', id, safeContent, existing.avatar);
+            writeStarted = true;
+            const updated = await NewsModel.findOneAndUpdate({ _id: existing._id, avatar: existing.avatar }, {
                 title: title,
                 slug: slug,
                 description: description,
                 content: safeContent,
                 typesid: types.id,
                 tag: tag
-            })
-            await attachUploadedImages(req.userId!, 'news', id, safeContent);
+            }, { new: true });
+            if (!updated) return res.status(409).json({ message: 'Resource changed; reload before updating' });
             return res.json({ message: "Cập nhật thành công", id })
         } else {
             thumbnailUrl = await uploadImageToCloudinary(linkfile, req.userId);
-            await NewsModel.findOneAndUpdate({ id: id }, {
+            await prepareUpdatedImageReferences(req.userId!, 'news', id, safeContent, thumbnailUrl, true);
+            writeStarted = true;
+            const updated = await NewsModel.findOneAndUpdate({ _id: existing._id, avatar: existing.avatar }, {
                 title: title,
                 slug: slug,
                 description: description,
@@ -157,12 +164,13 @@ async function updateNews(req: Request, res: Response) {
                 content: safeContent,
                 typesid: types.id,
                 tag: tag
-            })
-            await attachUploadedImages(req.userId!, 'news', id, safeContent, thumbnailUrl);
-            await cleanupResourceImages('news', id, [...extractCloudinaryImageUrls(safeContent), thumbnailUrl]);
+            }, { new: true });
+            if (!updated) return res.status(409).json({ message: 'Resource changed; reload before updating' });
             return res.json({ message: "Cập nhật thành công", id })
         }
     } catch (error) {
+        console.warn('News update interrupted; images and registry retained');
+        if (writeStarted) return res.status(503).json({ message: 'Update outcome unknown; reload before retrying', id: req.params.id, updateStatus: 'unknown' });
         return res.status(500).json({ message: 'Internal server error' })
     }
 }
@@ -170,12 +178,19 @@ async function updateNews(req: Request, res: Response) {
 //XÓA TIN TỨC
 async function deleteNews(req: Request, res: Response) {
     const id = req.params.id;
+    let deleteStarted = false;
     try {
         const post = await NewsModel.findOne({ id: id });
-        await cleanupResourceImages('news', id);
-        await NewsModel.deleteOne({ id: id });
+        if (!post) return res.status(404).json({ message: 'Resource not found' });
+        deleteStarted = true;
+        // Physical image cleanup and registry removal are deferred (race 3B).
+        const result = await NewsModel.deleteOne({ _id: post._id });
+        if (!result.acknowledged) return res.status(503).json({ message: 'Delete outcome unknown; reload before retrying', id, deleteStatus: 'unknown' });
+        if (result.deletedCount !== 1) return res.status(404).json({ message: 'Resource not found' });
         return res.json({ message: "Đã xóa bài viết", id });
     } catch (error) {
+        console.warn('News deletion interrupted; images and registry retained');
+        if (deleteStarted) return res.status(503).json({ message: 'Delete outcome unknown; reload before retrying', id, deleteStatus: 'unknown' });
         res.status(500).json({ message: 'Internal server error' });
     }
 }

@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { Content_Banner_Model } from "../Display_Model/Content_Banner_Model";
 import { convertToSlug, deleteImageFromCloudinary, randomStringPost, uploadImageToCloudinary } from "../../Services/sp";
 import { sanitizeRichHtml } from '../../Security/html';
+import { replaceDisplayImage } from '../../Services/replaceDisplayImage';
 
 interface TempMulterFile extends Express.Multer.File {
     buffer: Buffer;
@@ -45,7 +46,6 @@ async function createContentBanner(req: Request, res: Response) {
 }
 
 async function updateContentBanner(req: Request, res: Response) {
-    let images: string | null = null;
     try {
         const id = req.params.id;
         const title = req.body.title;
@@ -64,25 +64,17 @@ async function updateContentBanner(req: Request, res: Response) {
             })
             return res.json({ message: "Cập nhật thành công" })
         } else {
-            const old_content_banner = await Content_Banner_Model.findOne({ id: id })
-            const old_image = old_content_banner?.images
-            if (old_image) {
-                const urlObject = new URL(old_image);
-                const path = urlObject.pathname;
-                const idImage = path.substring(path.indexOf('Tinhocnhuy/'), path.lastIndexOf('.'));
-                await deleteImageFromCloudinary(idImage)
-            }
-            images = await uploadImageToCloudinary(linkimages);
-            await Content_Banner_Model.findOneAndUpdate({ id: id }, {
+            const result = await replaceDisplayImage(Content_Banner_Model, id, {
                 title: title,
                 content: safeContent,
                 linkservices: linkservices,
-                images: images
-            })
+            }, linkimages);
+            if (result === 'missing') return res.status(404).json({ message: 'Resource not found' });
+            if (result === 'conflict') return res.status(409).json({ message: 'Resource changed; reload before updating' });
             return res.json({ message: "Cập nhật thành công" })
         }
-    } catch (error) {
-        return res.status(500).json(error)
+    } catch {
+        return res.status(500).json({ message: 'Internal server error' });
     }
 }
 

@@ -5,7 +5,8 @@ import { NewsModel } from "../Model/News_Models";
 import { uploadImageToCloudinary, randomStringPost, convertToSlug } from "../Services/sp";
 import fs from "fs";
 import { sanitizeRichHtml } from '../Security/html';
-import { uploadImageBuffer, attachUploadedImages, cleanupResourceImages, extractCloudinaryImageUrls } from '../Services/cloudinaryAssets';
+import { uploadImageBuffer, prepareUpdatedImageReferences } from '../Services/cloudinaryAssets';
+import { createContentWithImages, ContentCreationUncertain } from '../Services/createContentWithImages';
 
 //UPLOAD HÌNH ẢNH LÊN CLOUDINARY KHI CHỌN HÌNH ẢNH TẠO BÀI VIẾT
 
@@ -34,7 +35,6 @@ interface TempMulterFile extends Express.Multer.File {
 
 //POST THÊM BÀI VIẾT
 async function createPost(req: Request, res: Response) {
-    let thumbnailUrl: string | null = null;
     try {
         const { title, description, category, content } = req.body;
         if ([title, description, category, content].some((value) => typeof value !== 'string') ||
@@ -66,21 +66,17 @@ async function createPost(req: Request, res: Response) {
         } else {
             id = slug + '-' + randomStringPost
         }
-        thumbnailUrl = await uploadImageToCloudinary(linkfile, req.userId)
-
-        const newPost = await PostModel.create({
+        await createContentWithImages(PostModel, 'post', req.userId!, {
             id: id,//Id Post
             title: title,
             slug: id,
             description: description,
-            avatar: thumbnailUrl,
             content: safeContent,
             // images: [publicId],
             // username: req.userId,
             username: "admindemo",
             categoryId: Cate.id,
-        });
-        await attachUploadedImages(req.userId!, 'post', id, safeContent, thumbnailUrl);
+        }, linkfile);
 
         // fs.unlink(linkfile.path, (err) => {
         //     if (err) {
@@ -92,7 +88,9 @@ async function createPost(req: Request, res: Response) {
 
         return res.json({ message: "Đã thêm bài viết", id });
     } catch (err) {
-        console.log(err);
+        if (err instanceof ContentCreationUncertain) {
+            return res.status(503).json({ message: 'Creation outcome unknown; check the article before retrying', id: err.resourceId, creationStatus: 'unknown' });
+        }
         return res.status(500).json({ message: 'Internal server error' });
     }
 }
@@ -100,6 +98,7 @@ async function createPost(req: Request, res: Response) {
 //CẬP NHẬT BÀI VIẾT
 async function updatePost(req: Request, res: Response) {
     let thumbnailUrl: string | null = null;
+    let writeStarted = false;
     try {
         const id = req.params.id;
         const { title, slug, description, content, category } = req.body;
@@ -109,6 +108,9 @@ async function updatePost(req: Request, res: Response) {
         }
         const safeContent = sanitizeRichHtml(content);
         const linkfile = req.file as TempMulterFile;
+
+        const existing = await PostModel.findOne({ id });
+        if (!existing) return res.status(404).json({ message: 'Resource not found' });
 
         // if (!linkfile) {
         //     return res.status(400).json({ error: 'No image provided.' });
@@ -125,30 +127,35 @@ async function updatePost(req: Request, res: Response) {
         }
 
         if (!linkfile) {
-            await PostModel.findOneAndUpdate({ id: id }, {
+            await prepareUpdatedImageReferences(req.userId!, 'post', id, safeContent, existing.avatar);
+            writeStarted = true;
+            const updated = await PostModel.findOneAndUpdate({ _id: existing._id, avatar: existing.avatar }, {
                 title: title,
                 slug: slug,
                 description: description,
                 content: safeContent,
                 categoryId: Cate.id,
-            })
-            await attachUploadedImages(req.userId!, 'post', id, safeContent);
+            }, { new: true });
+            if (!updated) return res.status(409).json({ message: 'Resource changed; reload before updating' });
             return res.json({ message: "Cập nhật thành công", id })
         } else {
             thumbnailUrl = await uploadImageToCloudinary(linkfile, req.userId)
-            await PostModel.findOneAndUpdate({ id: id }, {
+            await prepareUpdatedImageReferences(req.userId!, 'post', id, safeContent, thumbnailUrl, true);
+            writeStarted = true;
+            const updated = await PostModel.findOneAndUpdate({ _id: existing._id, avatar: existing.avatar }, {
                 title: title,
                 slug: slug,
                 description: description,
                 avatar: thumbnailUrl,
                 content: safeContent,
                 categoryId: Cate.id
-            })
-            await attachUploadedImages(req.userId!, 'post', id, safeContent, thumbnailUrl);
-            await cleanupResourceImages('post', id, [...extractCloudinaryImageUrls(safeContent), thumbnailUrl]);
+            }, { new: true });
+            if (!updated) return res.status(409).json({ message: 'Resource changed; reload before updating' });
             return res.json({ message: "Cập nhật thành công", id })
         }
     } catch (error) {
+        console.warn('Post update interrupted; images and registry retained');
+        if (writeStarted) return res.status(503).json({ message: 'Update outcome unknown; reload before retrying', id: req.params.id, updateStatus: 'unknown' });
         return res.status(500).json({ message: 'Internal server error' })
     }
 }
@@ -156,12 +163,19 @@ async function updatePost(req: Request, res: Response) {
 //XÓA BÀI VIẾT
 async function deletePost(req: Request, res: Response) {
     const id = req.params.id;
+    let deleteStarted = false;
     try {
         const post = await PostModel.findOne({ id: id });
-        await cleanupResourceImages('post', id);
-        await PostModel.deleteOne({ id: id });
+        if (!post) return res.status(404).json({ message: 'Resource not found' });
+        deleteStarted = true;
+        // Physical image cleanup and registry removal are deferred (race 3B).
+        const result = await PostModel.deleteOne({ _id: post._id });
+        if (!result.acknowledged) return res.status(503).json({ message: 'Delete outcome unknown; reload before retrying', id, deleteStatus: 'unknown' });
+        if (result.deletedCount !== 1) return res.status(404).json({ message: 'Resource not found' });
         return res.json({ message: "Đã xóa bài viết", id });
     } catch (error) {
+        console.warn('Post deletion interrupted; images and registry retained');
+        if (deleteStarted) return res.status(503).json({ message: 'Delete outcome unknown; reload before retrying', id, deleteStatus: 'unknown' });
         res.status(500).json({ message: 'Internal server error' });
     }
 }

@@ -18,7 +18,7 @@ function generateRandomStringPost() {
 }
 export const randomStringPost = generateRandomStringPost();
 
-export async function uploadImageToCloudinary(image: Express.Multer.File, ownerId?: string) {
+export async function uploadImageToCloudinary(image: Express.Multer.File, ownerId?: string, privatePublicId?: string) {
     try {
         if (!image) {
             throw new Error('No image provided.');
@@ -34,6 +34,7 @@ export async function uploadImageToCloudinary(image: Express.Multer.File, ownerI
         const result = await cloudinary.uploader.upload(`data:image/${format};base64,${base64Image}`, {
             folder: 'Tinhocnhuy', // Tên thư mục chứa các thumbnail trên Cloudinary
             allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+            ...(privatePublicId ? { public_id: privatePublicId, overwrite: false } : {}),
         });
         if (ownerId) await recordUploadedImage({ publicId: result.public_id, secureUrl: result.secure_url, ownerId });
         return result.secure_url;

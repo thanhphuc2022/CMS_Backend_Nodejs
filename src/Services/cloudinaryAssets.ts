@@ -57,23 +57,49 @@ export function extractCloudinaryImageUrls(html: string): string[] {
     return [...urls].slice(0, 200);
 }
 
-export async function attachUploadedImages(ownerId: string, kind: CloudinaryResourceKind, resourceId: string, html: string, thumbnailUrl?: string) {
+export async function attachUploadedImages(ownerId: string, kind: CloudinaryResourceKind, resourceId: string, html: string, thumbnailUrl?: string, requireThumbnail = false) {
     const urls = new Set(extractCloudinaryImageUrls(html));
     if (thumbnailUrl) urls.add(thumbnailUrl);
     if (!urls.size) return;
     const assets = await CloudinaryAssetModel.find({
         ownerId,
         secureUrl: { $in: [...urls] }
-    }).select('_id');
+    }).select(requireThumbnail ? '_id secureUrl' : '_id');
+    if (requireThumbnail && !assets.some((asset) => asset.secureUrl === thumbnailUrl)) {
+        throw new Error('Thumbnail registry entry not found');
+    }
     if (!assets.length) return;
-    await CloudinaryAssetModel.updateMany(
+    const result = await CloudinaryAssetModel.updateMany(
         { _id: { $in: assets.map((asset) => asset._id) }, ownerId },
         { $addToSet: { resources: { kind, resourceId } } }
     );
+    if (requireThumbnail && (!result.acknowledged || result.matchedCount !== assets.length)) {
+        throw new Error('Image registry attachment not confirmed');
+    }
 }
 
 function regexEscape(value: string) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Update-only preparation. Keep all old references: detaching/deleting requires
+// the deferred create/cleanup race to be resolved first. This does not call cleanup.
+export async function prepareUpdatedImageReferences(ownerId: string, kind: CloudinaryResourceKind, resourceId: string, html: string, thumbnailUrl?: string, newThumbnail = false) {
+    const urls = new Set(extractCloudinaryImageUrls(html));
+    if (thumbnailUrl) urls.add(thumbnailUrl);
+    if (!urls.size) return;
+    const assets = await CloudinaryAssetModel.find({ ownerId, secureUrl: { $in: [...urls] } }).select('_id secureUrl');
+    if (newThumbnail && !assets.some((asset) => asset.secureUrl === thumbnailUrl)) {
+        throw new Error('New thumbnail registry entry not found');
+    }
+    if (!assets.length) return; // Legacy or externally owned images remain untouched.
+    const result = await CloudinaryAssetModel.updateMany(
+        { _id: { $in: assets.map((asset) => asset._id) }, ownerId },
+        { $addToSet: { resources: { kind, resourceId } } }
+    );
+    if (!result.acknowledged || result.matchedCount !== assets.length) {
+        throw new Error('Updated image references not confirmed');
+    }
 }
 
 async function recordOtherReferences(asset: { _id: unknown; secureUrl: string }, kind: CloudinaryResourceKind, resourceId: string) {
