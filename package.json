@@ -4,7 +4,8 @@
   "description": "",
   "main": "server.ts",
   "scripts": {
-    "test": "node -r ts-node/register --test tests/security.test.js",
+    "test": "node -r ts-node/register --test tests/security.test.js tests/registration.test.js",
+    "test:registration": "node -r ts-node/register --test tests/registration.test.js",
     "start": "ts-node src/server.ts",
     "dev": "nodemon --exec ts-node src/server.ts"
   },

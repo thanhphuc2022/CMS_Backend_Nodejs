@@ -1,9 +1,10 @@
 # Registration transaction verification (4A)
 
-Run mocks and optional integration tests:
+`npm test` runs both `tests/security.test.js` and `tests/registration.test.js`.
+To run only the registration mocks and optional integration tests:
 
 ```powershell
-node -r ts-node/register --test tests/registration.test.js
+npm run test:registration
 ```
 
 Integration tests require `MONGODB_TEST_URI` configured securely in the environment.

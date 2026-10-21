@@ -81,6 +81,19 @@ EMAIL_PASSWORD=
 OTP được lưu dưới dạng digest trong MongoDB, sử dụng `JWT_SECRET_REFRESH` làm khóa HMAC và có hiệu lực 60 giây. Cấu hình hai JWT secret bằng giá trị riêng, mạnh và không dùng lại secret đã bị lộ.
 
 Luồng `/register` và `/forgotpass` trả thêm `challengeId`; gửi `challengeId` cùng `otp` tới `/postregister` hoặc `/forgotpassword`. Frontend cần được cập nhật tương ứng trước khi triển khai thay đổi này.
+
+## Kiểm thử
+
+- `npm test`: chạy bộ hồi quy bảo mật và test đăng ký transactional (4A).
+- `npm run test:registration`: chỉ chạy test đăng ký 4A.
+- Khi không có `MONGODB_TEST_URI`, integration MongoDB thật được **skip**; test mock pass không xác nhận transaction hoặc unique index trên DB triển khai.
+- Khi cấu hình `MONGODB_TEST_URI`, suite integration có thao tác ghi và tạo index trên database test `cms_registration_test`. Xem [hướng dẫn kiểm chứng 4A](tests/registration.README.md) trước khi chạy; không dùng DB production.
+
+## Giới hạn cập nhật đồng thời và cleanup ảnh
+
+Update Post/News hiện lọc theo `_id` và giá trị `avatar` đã đọc. Cơ chế này có thể phát hiện xung đột khi request khác thay thumbnail, nhưng **không phải kiểm soát phiên bản toàn bộ bài viết**. Nếu hai request chỉ sửa nội dung và giữ nguyên `avatar`, cả hai vẫn có thể trả thành công và lần ghi sau ghi đè lần trước. Chưa được coi mọi cập nhật đồng thời đều bị chặn bằng 409.
+
+Cleanup vật lý và gỡ tham chiếu registry của update/delete Post/News vẫn đang hoãn do race giữa create và cleanup (3B). Ảnh và metadata dư có thể còn lại sau khi sửa/xóa bài. Không tái sử dụng `cleanupResourceImages()` cho các luồng này trước khi cơ chế phối hợp được sửa và kiểm chứng.
 ---
 ---
 
